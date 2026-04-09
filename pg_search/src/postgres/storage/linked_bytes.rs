@@ -36,12 +36,10 @@ use tantivy::directory::OwnedBytes;
 
 const BLOCK_CACHE_SIZE: usize = 16;
 
-use crate::postgres::storage::buffer::ImmutablePage;
-
 #[derive(Debug)]
 struct CacheEntry {
     block_ord: usize,
-    page: ImmutablePage,
+    block_bytes: OwnedBytes,
 }
 
 /// Cache wrapper using `UnsafeCell` instead of `Mutex`.
@@ -384,23 +382,23 @@ impl LinkedBytesList {
         // Fast path: check most recent entry first (ascending access pattern).
         if let Some(last) = cache.back() {
             if last.block_ord == block_ord {
-                return last.page.get_byte(local_offset);
+                return last.block_bytes[local_offset];
             }
         }
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
-            return cache[pos].page.get_byte(local_offset);
+            return cache[pos].block_bytes[local_offset];
         }
 
         // Cache miss: read the block, pin it, cache it.
         let blockno = self.block_for_ord(block_ord).expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let page = buffer.into_immutable_page();
-        let byte = page[local_offset];
+        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
+        let byte = block_bytes[local_offset];
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(CacheEntry { block_ord, page });
+        cache.push_back(CacheEntry { block_ord, block_bytes });
 
         byte
     }
@@ -456,11 +454,11 @@ impl LinkedBytesList {
         // SAFETY: Postgres backends are single-threaded.
         let cache = self.read_cache.get();
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == start_block_ord) {
-            // Cache hit: move to back and return a copy as OwnedBytes
+            // Cache hit: move to back and return
             let entry = cache.remove(pos).unwrap();
-            let bytes = OwnedBytes::new(entry.page.to_vec());
+            let block_bytes = entry.block_bytes.clone();
             cache.push_back(entry);
-            return bytes;
+            return block_bytes;
         }
 
         // Cache miss: read the block.
@@ -468,18 +466,17 @@ impl LinkedBytesList {
             .block_for_ord(start_block_ord)
             .expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let page = buffer.into_immutable_page();
-        let bytes = OwnedBytes::new(page.to_vec());
+        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
         cache.push_back(CacheEntry {
             block_ord: start_block_ord,
-            page,
+            block_bytes: block_bytes.clone(),
         });
 
-        bytes
+        block_bytes
     }
 }
 
