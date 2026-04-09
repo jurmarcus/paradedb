@@ -379,6 +379,12 @@ impl LinkedBytesList {
 
         // SAFETY: Postgres backends are single-threaded.
         let cache = self.read_cache.get();
+        // Fast path: check most recent entry first (ascending access pattern).
+        if let Some(last) = cache.back() {
+            if last.block_ord == block_ord {
+                return last.block_bytes[local_offset];
+            }
+        }
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
             let entry = &cache[pos];
             return entry.block_bytes[local_offset];
