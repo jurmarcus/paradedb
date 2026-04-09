@@ -25,9 +25,7 @@ use std::sync::OnceLock;
 use super::block::{bm25_max_free_space, BM25PageSpecialData, LinkedList, LinkedListData};
 use crate::postgres::rel::PgSearchRelation;
 use crate::postgres::storage::blocklist;
-use crate::postgres::storage::buffer::{
-    init_new_buffer, Buffer, BufferManager, PageHeaderMethods, PinnedBuffer,
-};
+use crate::postgres::storage::buffer::{init_new_buffer, BufferManager, PageHeaderMethods};
 use crate::postgres::storage::fsm::FreeSpaceManager;
 
 use std::cell::UnsafeCell;
@@ -38,54 +36,12 @@ use tantivy::directory::OwnedBytes;
 
 const BLOCK_CACHE_SIZE: usize = 16;
 
+use crate::postgres::storage::buffer::ImmutablePage;
+
+#[derive(Debug)]
 struct CacheEntry {
     block_ord: usize,
-    /// Keeps the page pinned in Postgres shared buffers.
-    _pinned: PinnedBuffer,
-    /// Raw pointer to the page data (valid while _pinned is alive).
-    page_data: *const u8,
-    /// Usable data length on this page.
-    data_len: usize,
-}
-
-impl std::fmt::Debug for CacheEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CacheEntry")
-            .field("block_ord", &self.block_ord)
-            .finish()
-    }
-}
-
-impl CacheEntry {
-    /// Creates a cache entry from a Buffer. Unlocks the buffer but keeps it pinned.
-    /// The page data pointer remains valid as long as the PinnedBuffer is alive.
-    unsafe fn from_buffer(block_ord: usize, buffer: Buffer) -> Self {
-        use crate::postgres::storage::buffer::ImmutablePage;
-        let ImmutablePage { pinned_buffer } = buffer.into_immutable_page();
-        let page_data = {
-            let header_size = std::mem::offset_of!(pg_sys::PageHeaderData, pd_linp);
-            (pg_sys::BufferGetPage(pinned_buffer.pg_buffer) as *const u8).add(header_size)
-        };
-        let data_len = bm25_max_free_space();
-        CacheEntry {
-            block_ord,
-            _pinned: pinned_buffer,
-            page_data,
-            data_len,
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn read_byte(&self, local_offset: usize) -> u8 {
-        debug_assert!(local_offset < self.data_len);
-        *self.page_data.add(local_offset)
-    }
-
-    /// Returns a slice view of this cached page's data.
-    #[inline(always)]
-    unsafe fn as_slice(&self) -> &[u8] {
-        std::slice::from_raw_parts(self.page_data, self.data_len)
-    }
+    page: ImmutablePage,
 }
 
 /// Cache wrapper using `UnsafeCell` instead of `Mutex`.
@@ -428,23 +384,23 @@ impl LinkedBytesList {
         // Fast path: check most recent entry first (ascending access pattern).
         if let Some(last) = cache.back() {
             if last.block_ord == block_ord {
-                return last.read_byte(local_offset);
+                return last.page[local_offset];
             }
         }
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
-            return cache[pos].read_byte(local_offset);
+            return cache[pos].page[local_offset];
         }
 
         // Cache miss: read the block, pin it, cache it.
         let blockno = self.block_for_ord(block_ord).expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let entry = CacheEntry::from_buffer(block_ord, buffer);
-        let byte = entry.read_byte(local_offset);
+        let page = buffer.into_immutable_page();
+        let byte = page[local_offset];
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(entry);
+        cache.push_back(CacheEntry { block_ord, page });
 
         byte
     }
@@ -502,7 +458,7 @@ impl LinkedBytesList {
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == start_block_ord) {
             // Cache hit: move to back and return a copy as OwnedBytes
             let entry = cache.remove(pos).unwrap();
-            let bytes = OwnedBytes::new(entry.as_slice().to_vec());
+            let bytes = OwnedBytes::new(entry.page.to_vec());
             cache.push_back(entry);
             return bytes;
         }
@@ -512,13 +468,16 @@ impl LinkedBytesList {
             .block_for_ord(start_block_ord)
             .expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let entry = CacheEntry::from_buffer(start_block_ord, buffer);
-        let bytes = OwnedBytes::new(entry.as_slice().to_vec());
+        let page = buffer.into_immutable_page();
+        let bytes = OwnedBytes::new(page.to_vec());
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(entry);
+        cache.push_back(CacheEntry {
+            block_ord: start_block_ord,
+            page,
+        });
 
         bytes
     }

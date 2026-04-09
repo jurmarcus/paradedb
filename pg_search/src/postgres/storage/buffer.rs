@@ -387,7 +387,7 @@ impl BufferMut {
 
 #[derive(Debug)]
 pub struct PinnedBuffer {
-    pub(super) pg_buffer: pg_sys::Buffer,
+    pg_buffer: pg_sys::Buffer,
 }
 
 // NOTE: We intentionally do NOT use `impl_safe_drop!` here because `block_tracker::forget!`
@@ -968,7 +968,7 @@ pub fn init_new_buffer(rel: &PgSearchRelation) -> BufferMut {
 
 #[derive(Debug)]
 pub struct ImmutablePage {
-    pub(super) pinned_buffer: PinnedBuffer,
+    pinned_buffer: PinnedBuffer,
 }
 
 impl Deref for ImmutablePage {
