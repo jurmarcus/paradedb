@@ -370,6 +370,37 @@ impl LinkedBytesList {
         self.bman.page_is_empty(self.get_start_blockno().0)
     }
 
+    /// Reads a single byte from the block list without allocating OwnedBytes.
+    /// Uses the block cache for zero-alloc access on cache hits.
+    pub unsafe fn get_byte(&self, offset: usize) -> u8 {
+        const ITEM_SIZE: usize = bm25_max_free_space();
+        let block_ord = offset / ITEM_SIZE;
+        let local_offset = offset % ITEM_SIZE;
+
+        // SAFETY: Postgres backends are single-threaded.
+        let cache = self.read_cache.get();
+        if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
+            let entry = &cache[pos];
+            return entry.block_bytes[local_offset];
+        }
+
+        // Cache miss: read the block, cache it, return the byte.
+        let blockno = self.block_for_ord(block_ord).expect("block not found");
+        let buffer = self.bman.get_buffer(blockno);
+        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
+        let byte = block_bytes[local_offset];
+
+        if cache.len() >= BLOCK_CACHE_SIZE {
+            cache.pop_front();
+        }
+        cache.push_back(CacheEntry {
+            block_ord,
+            block_bytes,
+        });
+
+        byte
+    }
+
     pub unsafe fn get_bytes_range(&self, range: Range<usize>) -> OwnedBytes {
         if range.is_empty() {
             return OwnedBytes::empty();
