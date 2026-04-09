@@ -249,11 +249,12 @@ impl Buffer {
         let pg_buffer =
             std::mem::replace(&mut self.pg_buffer, pg_sys::InvalidBuffer as pg_sys::Buffer);
         block_tracker::forget!(pg_sys::BufferGetBlockNumber(pg_buffer));
-        // Compute data pointer once.
+        // Compute data pointer and actual data length once.
         let header_size = std::mem::offset_of!(pg_sys::PageHeaderData, pd_linp);
         let pg_page = pg_sys::BufferGetPage(pg_buffer);
         let data_ptr = (pg_page as *const u8).add(header_size);
-        let data_len = bm25_max_free_space();
+        let pd_lower = (*(pg_page as *const pg_sys::PageHeaderData)).pd_lower as usize;
+        let data_len = pd_lower - header_size;
         ImmutablePage {
             pinned_buffer: PinnedBuffer::new(pg_buffer),
             data_ptr,
