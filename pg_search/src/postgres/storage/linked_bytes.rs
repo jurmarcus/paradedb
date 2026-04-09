@@ -36,10 +36,12 @@ use tantivy::directory::OwnedBytes;
 
 const BLOCK_CACHE_SIZE: usize = 16;
 
+use crate::postgres::storage::buffer::ImmutablePage;
+
 #[derive(Debug)]
 struct CacheEntry {
     block_ord: usize,
-    block_bytes: OwnedBytes,
+    page: ImmutablePage,
 }
 
 /// Cache wrapper using `UnsafeCell` instead of `Mutex`.
@@ -382,27 +384,23 @@ impl LinkedBytesList {
         // Fast path: check most recent entry first (ascending access pattern).
         if let Some(last) = cache.back() {
             if last.block_ord == block_ord {
-                return last.block_bytes[local_offset];
+                return last.page[local_offset];
             }
         }
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
-            let entry = &cache[pos];
-            return entry.block_bytes[local_offset];
+            return cache[pos].page[local_offset];
         }
 
-        // Cache miss: read the block, cache it, return the byte.
+        // Cache miss: read the block, pin it, cache it.
         let blockno = self.block_for_ord(block_ord).expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
-        let byte = block_bytes[local_offset];
+        let page = buffer.into_immutable_page();
+        let byte = page[local_offset];
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(CacheEntry {
-            block_ord,
-            block_bytes,
-        });
+        cache.push_back(CacheEntry { block_ord, page });
 
         byte
     }
@@ -455,33 +453,13 @@ impl LinkedBytesList {
     }
 
     unsafe fn get_bytes_range_block(&self, start_block_ord: usize) -> OwnedBytes {
-        // SAFETY: Postgres backends are single-threaded.
-        let cache = self.read_cache.get();
-        if let Some(pos) = cache.iter().rposition(|e| e.block_ord == start_block_ord) {
-            // Cache hit: move to back and return
-            let entry = cache.remove(pos).unwrap();
-            let block_bytes = entry.block_bytes.clone();
-            cache.push_back(entry);
-            return block_bytes;
-        }
-
-        // Cache miss: read the block.
+        // Re-pin from Postgres buffers (cheap — already in shared buffers)
+        // and wrap as OwnedBytes. No copy needed.
         let blockno = self
             .block_for_ord(start_block_ord)
             .expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-
-        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
-
-        if cache.len() >= BLOCK_CACHE_SIZE {
-            cache.pop_front();
-        }
-        cache.push_back(CacheEntry {
-            block_ord: start_block_ord,
-            block_bytes: block_bytes.clone(),
-        });
-
-        block_bytes
+        OwnedBytes::new(buffer.into_immutable_page())
     }
 }
 
