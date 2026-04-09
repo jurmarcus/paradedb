@@ -16,7 +16,7 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 use crate::postgres::rel::PgSearchRelation;
-use crate::postgres::storage::block::{BM25PageSpecialData, PgItem};
+use crate::postgres::storage::block::{bm25_max_free_space, BM25PageSpecialData, PgItem};
 use crate::postgres::storage::fsm::v2::V2FSM;
 use crate::postgres::storage::fsm::FreeSpaceManager;
 use crate::postgres::storage::metadata::MetaPage;
@@ -249,8 +249,15 @@ impl Buffer {
         let pg_buffer =
             std::mem::replace(&mut self.pg_buffer, pg_sys::InvalidBuffer as pg_sys::Buffer);
         block_tracker::forget!(pg_sys::BufferGetBlockNumber(pg_buffer));
+        // Compute data pointer once.
+        let header_size = std::mem::offset_of!(pg_sys::PageHeaderData, pd_linp);
+        let pg_page = pg_sys::BufferGetPage(pg_buffer);
+        let data_ptr = (pg_page as *const u8).add(header_size);
+        let data_len = bm25_max_free_space();
         ImmutablePage {
             pinned_buffer: PinnedBuffer::new(pg_buffer),
+            data_ptr,
+            data_len,
         }
     }
 
@@ -969,21 +976,26 @@ pub fn init_new_buffer(rel: &PgSearchRelation) -> BufferMut {
 #[derive(Debug)]
 pub struct ImmutablePage {
     pinned_buffer: PinnedBuffer,
+    /// Cached pointer to the page data (after the page header).
+    /// Valid as long as pinned_buffer is alive.
+    data_ptr: *const u8,
+    data_len: usize,
+}
+
+impl ImmutablePage {
+    /// Reads a single byte at the given offset without going through Deref.
+    #[inline(always)]
+    pub fn get_byte(&self, offset: usize) -> u8 {
+        debug_assert!(offset < self.data_len);
+        unsafe { *self.data_ptr.add(offset) }
+    }
 }
 
 impl Deref for ImmutablePage {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        let pg_page = unsafe { pg_sys::BufferGetPage(self.pinned_buffer.pg_buffer) };
-        let page = Page {
-            pg_page,
-            _buffer: None,
-        };
-        let slice = page.as_slice();
-        // It's safe to extend the lifetime of this slice because `self` owns the `Buffer`,
-        // which keeps the underlying page data alive and pinned in memory.
-        unsafe { &*(slice as *const [u8]) }
+        unsafe { std::slice::from_raw_parts(self.data_ptr, self.data_len) }
     }
 }
 

@@ -384,11 +384,11 @@ impl LinkedBytesList {
         // Fast path: check most recent entry first (ascending access pattern).
         if let Some(last) = cache.back() {
             if last.block_ord == block_ord {
-                return last.page[local_offset];
+                return last.page.get_byte(local_offset);
             }
         }
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == block_ord) {
-            return cache[pos].page[local_offset];
+            return cache[pos].page.get_byte(local_offset);
         }
 
         // Cache miss: read the block, pin it, cache it.
