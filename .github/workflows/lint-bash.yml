@@ -115,7 +115,7 @@ jobs:
   # Required for branch protection — GitHub lacks "required when present" for
   # status checks so this gate always runs and reports pass/fail. Standard pattern:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
-  # https://github.com/tokio-rs/tokio/blob/master/.github/workflows/ci.yml
+  # https://github.com/orgs/community/discussions/26251
   result:
     name: Result
     if: always()
