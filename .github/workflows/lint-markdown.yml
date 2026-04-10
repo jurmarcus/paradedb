@@ -8,6 +8,10 @@ name: Lint Markdown
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths:
+      - "**/*.md"
+      - "**/*.mdx"
+      - ".github/workflows/lint-markdown.yml"
   workflow_dispatch:
 
 concurrency:
@@ -15,27 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ github.event_name != 'pull_request' || steps.filter.outputs.relevant == 'true' }}
-    steps:
-      - uses: dorny/paths-filter@v3
-        id: filter
-        if: github.event_name == 'pull_request'
-        with:
-          filters: |
-            relevant:
-              - "**/*.md"
-              - "**/*.mdx"
-              - ".github/workflows/lint-markdown.yml"
-
   lint-markdown:
     name: Lint Markdown Files
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true'
 
     steps:
       - name: Checkout Git Repository
@@ -52,19 +38,3 @@ jobs:
 
       - name: Run Prettier
         run: prettier --check "{**/*.md,**/*.mdx}" --ignore-path .prettierignore
-
-  result:
-    name: Result
-    if: always()
-    needs: [changes, lint-markdown]
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
-            echo "ignore-ci-checks label present — skipping CI gate"
-            exit 0
-          fi
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "CI failed"
-            exit 1
-          fi
