@@ -15,7 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Skip CI when the PR does not touch files relevant to this workflow.
+  # We use dorny/paths-filter instead of on.pull_request.paths because the
+  # built-in paths filter skips the entire workflow — including the required
+  # gate job — which causes branch protection to block merges indefinitely.
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
