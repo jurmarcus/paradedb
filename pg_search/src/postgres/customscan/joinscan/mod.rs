@@ -375,14 +375,15 @@ impl JoinScan {
         }
 
         if join_clause.plan.has_semi_or_anti() {
-            if join_clause.partitioning_source_index() != 0 {
+            let forced_idx = join_clause.plan.semi_partitioning_index();
+            if join_clause.partitioning_source_index() != forced_idx {
                 pgrx::warning!(
-                    "For SEMI/ANTI/LeftMark join correctness, JoinScan needs to use a suboptimal \
+                    "For SEMI/ANTI join correctness, JoinScan needs to use a suboptimal \
                      parallel partitioning strategy for this query. See \
                      https://github.com/paradedb/paradedb/issues/4152"
                 );
             }
-            join_clause = join_clause.with_forced_partitioning(0);
+            join_clause = join_clause.with_forced_partitioning(forced_idx);
         }
 
         Some((join_clause, limit_offset))

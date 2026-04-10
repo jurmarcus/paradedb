@@ -763,11 +763,34 @@ impl RelNode {
             RelNode::Join(j) => {
                 matches!(
                     j.join_type,
-                    JoinType::Semi | JoinType::Anti | JoinType::LeftMark | JoinType::RightMark
+                    JoinType::Semi
+                        | JoinType::Anti
+                        | JoinType::LeftMark
+                        | JoinType::RightMark
+                        | JoinType::RightSemi
+                        | JoinType::RightAnti
                 ) || j.left.has_semi_or_anti()
                     || j.right.has_semi_or_anti()
             }
             RelNode::Filter(f) => f.input.has_semi_or_anti(),
+        }
+    }
+
+    /// Returns the source index that must be used for partitioning to ensure
+    /// semi/anti join correctness. For left-output joins (Semi, Anti, LeftMark),
+    /// this is 0 (the first left-side source). For right-output joins (RightSemi,
+    /// RightAnti, RightMark), this is the first right-side source index.
+    pub fn semi_partitioning_index(&self) -> usize {
+        match self {
+            RelNode::Join(j)
+                if matches!(
+                    j.join_type,
+                    JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark
+                ) =>
+            {
+                j.left.sources().len()
+            }
+            _ => 0,
         }
     }
 
@@ -782,6 +805,8 @@ impl RelNode {
                         | JoinType::Anti
                         | JoinType::LeftMark
                         | JoinType::RightMark
+                        | JoinType::RightSemi
+                        | JoinType::RightAnti
                 ) {
                     acc.push(j.join_type);
                 }
