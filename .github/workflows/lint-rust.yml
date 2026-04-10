@@ -15,13 +15,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
+  # Skip CI when the PR does not touch files relevant to this workflow.
+  detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ github.event_name != 'pull_request' || steps.filter.outputs.relevant == 'true' }}
     steps:
-      - uses: dorny/paths-filter@v4
+      - name: Detect File Changes
+        uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name == 'pull_request'
         with:
@@ -34,8 +36,8 @@ jobs:
   lint-rust:
     name: Lint Rust Files
     runs-on: ubicloud-standard-4-arm
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should_run == 'true'
     strategy:
       matrix:
         pg_version: [18]
@@ -106,13 +108,14 @@ jobs:
   # status checks so this gate always runs and reports pass/fail. Standard pattern:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
   # https://github.com/orgs/community/discussions/26251
-  result:
-    name: Results
+  report-results:
+    name: Report Results
     if: always()
-    needs: [changes, lint-rust]
+    needs: [detect-changes, lint-rust]
     runs-on: ubuntu-latest
     steps:
-      - run: |
+      - name: Evaluate CI Results
+        run: |
           if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
             echo "ignore-ci-checks label present — skipping CI gate"
             exit 0

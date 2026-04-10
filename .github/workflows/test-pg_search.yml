@@ -22,13 +22,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
+  # Skip CI when the PR does not touch files relevant to this workflow.
+  detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ github.event_name != 'pull_request' || steps.filter.outputs.relevant == 'true' }}
     steps:
-      - uses: dorny/paths-filter@v4
+      - name: Detect File Changes
+        uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name == 'pull_request'
         with:
@@ -45,8 +47,8 @@ jobs:
   set-matrix:
     name: Define the PostgreSQL Version Matrix
     runs-on: ubuntu-latest
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.should_run == 'true' }}
+    needs: detect-changes
+    if: ${{ !cancelled() && needs.detect-changes.outputs.should_run == 'true' }}
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -64,8 +66,8 @@ jobs:
   test-pg_search:
     name: Test pg_search on PostgreSQL ${{ matrix.pg_version }} (${{ matrix.pg_impl }} - ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    if: ${{ !cancelled() && needs.changes.outputs.should_run == 'true' }}
-    needs: [changes, set-matrix]
+    if: ${{ !cancelled() && needs.detect-changes.outputs.should_run == 'true' }}
+    needs: [detect-changes, set-matrix]
     strategy:
       fail-fast: false
       matrix:
@@ -347,13 +349,14 @@ jobs:
   # status checks so this gate always runs and reports pass/fail. Standard pattern:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
   # https://github.com/orgs/community/discussions/26251
-  result:
-    name: Results
+  report-results:
+    name: Report Results
     if: always()
-    needs: [changes, set-matrix, test-pg_search, upload-coverage]
+    needs: [detect-changes, set-matrix, test-pg_search, upload-coverage]
     runs-on: ubuntu-latest
     steps:
-      - run: |
+      - name: Evaluate CI Results
+        run: |
           if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
             echo "ignore-ci-checks label present — skipping CI gate"
             exit 0
