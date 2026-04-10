@@ -12,10 +12,6 @@ on:
       - main
       - 0.*.x # Release branches
       - moe/** # Temporary: trigger CI on stacked PR chain
-    paths:
-      - ".github/workflows/test-docs.yml"
-      - ".github/scripts/**"
-      - "docs/**"
   workflow_dispatch:
 
 concurrency:
@@ -23,9 +19,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ github.event_name != 'pull_request' || steps.filter.outputs.relevant == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            relevant:
+              - ".github/workflows/test-docs.yml"
+              - ".github/scripts/**"
+              - "docs/**"
+
   test-docs:
     name: Test Docs for Broken Links, SEO Issues, and Code Snippets
     runs-on: ubicloud-standard-8-arm-ubuntu-2404
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     strategy:
       matrix:
         pg_version: [18]
@@ -161,3 +175,19 @@ jobs:
 
       - name: Smoke Test Code Snippets
         run: ./.github/scripts/smoke_test_code_snippets.sh
+
+  result:
+    name: Result
+    if: always()
+    needs: [changes, test-docs]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
+            echo "ignore-ci-checks label present — skipping CI gate"
+            exit 0
+          fi
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "CI failed"
+            exit 1
+          fi

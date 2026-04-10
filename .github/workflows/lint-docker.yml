@@ -8,9 +8,6 @@ name: Lint Docker
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - ".github/workflows/lint-docker.yml"
-      - "docker/**"
   workflow_dispatch:
 
 concurrency:
@@ -18,9 +15,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ github.event_name != 'pull_request' || steps.filter.outputs.relevant == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            relevant:
+              - ".github/workflows/lint-docker.yml"
+              - "docker/**"
+
   lint-docker:
     name: Lint Dockerfiles
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
 
     steps:
       - name: Checkout Git Repository
@@ -31,3 +45,19 @@ jobs:
         with:
           dockerfile: "**/Dockerfile*"
           error_level: 2 # Treat INFO as error
+
+  result:
+    name: Result
+    if: always()
+    needs: [changes, lint-docker]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
+            echo "ignore-ci-checks label present — skipping CI gate"
+            exit 0
+          fi
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "CI failed"
+            exit 1
+          fi
