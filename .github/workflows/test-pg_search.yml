@@ -348,7 +348,7 @@ jobs:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
   # https://github.com/orgs/community/discussions/26251
   result:
-    name: Result
+    name: Results
     if: always()
     needs: [changes, set-matrix, test-pg_search, upload-coverage]
     runs-on: ubuntu-latest

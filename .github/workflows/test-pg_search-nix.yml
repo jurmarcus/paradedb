@@ -98,7 +98,7 @@ jobs:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
   # https://github.com/orgs/community/discussions/26251
   result:
-    name: Result
+    name: Results
     if: always()
     needs: [changes, nix-cargo-hash-check]
     runs-on: ubuntu-latest
