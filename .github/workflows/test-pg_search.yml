@@ -343,6 +343,10 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # Required for branch protection — GitHub lacks "required when present" for
+  # status checks so this gate always runs and reports pass/fail. Standard pattern:
+  # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
+  # https://github.com/hyperium/hyper/blob/master/.github/workflows/CI.yml
   result:
     name: Result
     if: always()
