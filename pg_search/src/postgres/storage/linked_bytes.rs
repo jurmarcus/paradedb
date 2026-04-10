@@ -38,38 +38,36 @@ const BLOCK_CACHE_SIZE: usize = 16;
 
 use crate::postgres::storage::buffer::ImmutablePage;
 
-struct CacheEntry {
+/// Cache entry for get_byte: ImmutablePage (no Arc).
+struct ByteCacheEntry {
     block_ord: usize,
-    blockno: pg_sys::BlockNumber,
     page: ImmutablePage,
 }
 
-impl std::fmt::Debug for CacheEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CacheEntry")
-            .field("block_ord", &self.block_ord)
-            .finish()
-    }
+/// Cache entry for get_bytes_range_block: OwnedBytes (Arc clone on hit).
+struct RangeCacheEntry {
+    block_ord: usize,
+    block_bytes: OwnedBytes,
 }
 
 /// UnsafeCell-based cache. SAFETY: Postgres backends are single-threaded.
-struct ReadCache(UnsafeCell<VecDeque<CacheEntry>>);
-unsafe impl Send for ReadCache {}
-unsafe impl Sync for ReadCache {}
+struct UnsafeCache<T>(UnsafeCell<VecDeque<T>>);
+unsafe impl<T> Send for UnsafeCache<T> {}
+unsafe impl<T> Sync for UnsafeCache<T> {}
 
-impl std::fmt::Debug for ReadCache {
+impl<T> std::fmt::Debug for UnsafeCache<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ReadCache(..)")
+        f.write_str("UnsafeCache(..)")
     }
 }
 
-impl ReadCache {
+impl<T> UnsafeCache<T> {
     fn new() -> Self {
         Self(UnsafeCell::new(VecDeque::with_capacity(BLOCK_CACHE_SIZE)))
     }
 
     #[inline(always)]
-    unsafe fn get(&self) -> &mut VecDeque<CacheEntry> {
+    unsafe fn get(&self) -> &mut VecDeque<T> {
         &mut *self.0.get()
     }
 }
@@ -114,7 +112,8 @@ pub struct LinkedBytesList {
     bman: BufferManager,
     pub header_blockno: pg_sys::BlockNumber,
     blocklist_reader: OnceLock<blocklist::reader::BlockList>,
-    read_cache: ReadCache,
+    byte_cache: UnsafeCache<ByteCacheEntry>,
+    range_cache: UnsafeCache<RangeCacheEntry>,
 }
 
 pub struct LinkedBytesListWriter {
@@ -246,7 +245,8 @@ impl LinkedBytesList {
             bman: BufferManager::new(rel),
             header_blockno,
             blocklist_reader: Default::default(),
-            read_cache: ReadCache::new(),
+            byte_cache: UnsafeCache::new(),
+            range_cache: UnsafeCache::new(),
         }
     }
 
@@ -293,7 +293,8 @@ impl LinkedBytesList {
             bman,
             header_blockno,
             blocklist_reader: Default::default(),
-            read_cache: ReadCache::new(),
+            byte_cache: UnsafeCache::new(),
+            range_cache: UnsafeCache::new(),
         }
     }
 
@@ -384,7 +385,7 @@ impl LinkedBytesList {
         let local_offset = offset % ITEM_SIZE;
 
         // SAFETY: Postgres backends are single-threaded.
-        let cache = self.read_cache.get();
+        let cache = self.byte_cache.get();
         // Fast path: check most recent entry first (ascending access pattern).
         if let Some(last) = cache.back() {
             if last.block_ord == block_ord {
@@ -404,7 +405,7 @@ impl LinkedBytesList {
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(CacheEntry { block_ord, blockno, page });
+        cache.push_back(ByteCacheEntry { block_ord, page });
 
         byte
     }
@@ -458,36 +459,31 @@ impl LinkedBytesList {
 
     unsafe fn get_bytes_range_block(&self, start_block_ord: usize) -> OwnedBytes {
         // SAFETY: Postgres backends are single-threaded.
-        let cache = self.read_cache.get();
-
-        // Check cache — if found, re-pin the same blockno (cheap, already in shared buffers).
+        let cache = self.range_cache.get();
         if let Some(pos) = cache.iter().rposition(|e| e.block_ord == start_block_ord) {
-            let blockno = cache[pos].blockno;
-            let buffer = self.bman.get_buffer(blockno);
-            return OwnedBytes::new(buffer.into_immutable_page());
+            // Cache hit: move to back, Arc clone.
+            let entry = cache.remove(pos).unwrap();
+            let block_bytes = entry.block_bytes.clone();
+            cache.push_back(entry);
+            return block_bytes;
         }
 
-        // Cache miss: look up blockno, read the block, cache it.
+        // Cache miss: read the block.
         let blockno = self
             .block_for_ord(start_block_ord)
             .expect("block not found");
         let buffer = self.bman.get_buffer(blockno);
-        let page = buffer.into_immutable_page();
-
-        // Re-pin for the OwnedBytes we return (cache keeps its own pin).
-        let buffer2 = self.bman.get_buffer(blockno);
-        let ret = OwnedBytes::new(buffer2.into_immutable_page());
+        let block_bytes = OwnedBytes::new(buffer.into_immutable_page());
 
         if cache.len() >= BLOCK_CACHE_SIZE {
             cache.pop_front();
         }
-        cache.push_back(CacheEntry {
+        cache.push_back(RangeCacheEntry {
             block_ord: start_block_ord,
-            blockno,
-            page,
+            block_bytes: block_bytes.clone(),
         });
 
-        ret
+        block_bytes
     }
 }
 
