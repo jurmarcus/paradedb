@@ -215,10 +215,6 @@ jobs:
     steps:
       - name: Evaluate CI Results
         run: |
-          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ignore-ci-checks') }}" == "true" ]]; then
-            echo "ignore-ci-checks label present — skipping CI gate"
-            exit 0
-          fi
           if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
             echo "CI failed"
             exit 1
