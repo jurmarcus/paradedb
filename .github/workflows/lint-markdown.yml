@@ -69,7 +69,7 @@ jobs:
     steps:
       - name: Evaluate CI Results
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "CI failed"
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "CI failed or was cancelled"
             exit 1
           fi

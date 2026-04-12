@@ -68,6 +68,10 @@ jobs:
   test-pg_search:
     name: Test pg_search on PostgreSQL ${{ matrix.pg_version }} (${{ matrix.pg_impl }} - ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # detect-changes is listed in needs: explicitly (not transitively via set-matrix)
+    # so we can still read its outputs on the skip path. If detect-changes itself
+    # fails (e.g., dorny API error), should_run is empty → this job is skipped and
+    # report-results sees the failure in needs.*.result and fails the gate.
     if: ${{ !cancelled() && needs.detect-changes.outputs.should_run == 'true' }}
     needs: [detect-changes, set-matrix]
     strategy:
@@ -359,7 +363,7 @@ jobs:
     steps:
       - name: Evaluate CI Results
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "CI failed"
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "CI failed or was cancelled"
             exit 1
           fi

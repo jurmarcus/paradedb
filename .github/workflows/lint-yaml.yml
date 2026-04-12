@@ -54,6 +54,21 @@ jobs:
       - name: Check YAML Formatting
         run: prettier --check "**/*.{yml,yaml}" --ignore-path .prettierignore
 
+      # Guardrail for the required-check gate pattern: asserts that every job
+      # in a gated workflow is listed in report-results.needs:, so a future
+      # commit that adds a job without updating the gate can't silently bypass
+      # branch protection. See .github/scripts/check_gate_needs.py.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Check gated workflows declare complete needs lists
+        run: python3 .github/scripts/check_gate_needs.py
+
   # Required for branch protection — GitHub lacks "required when present" for
   # status checks so this gate always runs and reports pass/fail. Standard pattern:
   # https://github.com/astral-sh/ruff/blob/main/.github/workflows/ci.yaml
@@ -66,7 +81,7 @@ jobs:
     steps:
       - name: Evaluate CI Results
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "CI failed"
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "CI failed or was cancelled"
             exit 1
           fi
