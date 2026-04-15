@@ -384,6 +384,7 @@ unsafe fn wrap_with_semi_anti(
             right: inner_node,
             equi_keys: equi_keys.clone(),
             filter: None,
+            subplan_id: Some((*subplan).plan_id),
         };
 
         all_keys.extend(equi_keys);
@@ -432,6 +433,7 @@ unsafe fn wrap_with_mark_filter(
             right: inner_node,
             equi_keys: equi_keys.clone(),
             filter: None,
+            subplan_id: Some((*or_ext.subplan).plan_id),
         };
 
         all_keys.extend(equi_keys);
@@ -573,6 +575,7 @@ unsafe fn collect_join_sources_join_rel(
             right: inner_node,
             equi_keys: join_conditions.equi_keys.clone(),
             filter: None,
+            subplan_id: None,
         };
 
         keys.extend(join_conditions.equi_keys);
