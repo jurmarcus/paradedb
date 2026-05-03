@@ -3,6 +3,8 @@ name = "tokenizers"
 version = { workspace = true }
 edition = { workspace = true }
 
+[features]
+sudachi = ["dep:sudachi-tantivy"]
 
 [dependencies]
 anyhow = "1.0.102"
@@ -25,6 +27,9 @@ icu_properties = "2.2.0"
 unicode-segmentation = "1.13.2"
 icu_segmenter = "2.2.0"
 opencc-jieba-rs = "0.7.2"
+
+# Sudachi Japanese tokenizer (optional, feature-gated)
+sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi", optional = true }
 
 [dev-dependencies]
 rstest = "0.25.0"

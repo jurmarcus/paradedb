@@ -30,6 +30,9 @@ use crate::{
     unicode_words::UnicodeWordsTokenizer,
 };
 
+#[cfg(feature = "sudachi")]
+use crate::sudachi::{SudachiMode, SudachiTokenizer as SudachiTok};
+
 use crate::chinese_convert::{ChineseConvertTokenizer, ConvertMode};
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -403,6 +406,16 @@ pub enum SearchTokenizer {
     },
     #[strum(serialize = "icu")]
     ICUTokenizer(SearchTokenizerFilters),
+    /// Sudachi Japanese tokenizer with B+C multi-granularity support
+    #[cfg(feature = "sudachi")]
+    #[strum(serialize = "sudachi")]
+    Sudachi {
+        /// Split mode: a, b, c, or search (default: search)
+        mode: SudachiMode,
+        /// Use normalized form (default: true)
+        normalized: bool,
+        filters: SearchTokenizerFilters,
+    },
     Jieba {
         chinese_convert: Option<ConvertMode>,
         filters: SearchTokenizerFilters,
@@ -515,6 +528,35 @@ impl SearchTokenizer {
             "japanese_lindera" => Ok(SearchTokenizer::JapaneseLinderaDeprecated(filters)),
             "korean_lindera" => Ok(SearchTokenizer::KoreanLinderaDeprecated(filters)),
             "icu" => Ok(SearchTokenizer::ICUTokenizer(filters)),
+            #[cfg(feature = "sudachi")]
+            "sudachi" | "japanese_sudachi" => {
+                let mode = if value["mode"].is_null() {
+                    SudachiMode::default()
+                } else {
+                    let mode_str = value["mode"].as_str().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "sudachi tokenizer 'mode' must be a string (a, b, c, or search)"
+                        )
+                    })?;
+                    SudachiMode::from_str(mode_str).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "sudachi tokenizer 'mode' must be one of: a, b, c, search. Got: {mode_str}"
+                        )
+                    })?
+                };
+                let normalized = if value["normalized"].is_null() {
+                    true
+                } else {
+                    value["normalized"].as_bool().ok_or_else(|| {
+                        anyhow::anyhow!("sudachi tokenizer 'normalized' must be a boolean")
+                    })?
+                };
+                Ok(SearchTokenizer::Sudachi {
+                    mode,
+                    normalized,
+                    filters,
+                })
+            }
             "jieba" => {
                 let chinese_convert: Option<ConvertMode> = if value["chinese_convert"].is_null() {
                     None
@@ -669,6 +711,12 @@ impl SearchTokenizer {
             SearchTokenizer::ICUTokenizer(filters) => {
                 add_filters!(ICUTokenizer, filters)
             }
+            #[cfg(feature = "sudachi")]
+            SearchTokenizer::Sudachi {
+                mode,
+                normalized,
+                filters,
+            } => add_filters!(SudachiTok::new(*mode, *normalized), filters),
             SearchTokenizer::Jieba {
                 chinese_convert,
                 filters,
@@ -733,6 +781,8 @@ impl SearchTokenizer {
             SearchTokenizer::LinderaDeprecated(_, filters) => filters,
             SearchTokenizer::Lindera { filters, .. } => filters,
             SearchTokenizer::ICUTokenizer(filters) => filters,
+            #[cfg(feature = "sudachi")]
+            SearchTokenizer::Sudachi { filters, .. } => filters,
             SearchTokenizer::Jieba { filters, .. } => filters,
             SearchTokenizer::UnicodeWordsDeprecated { filters, .. } => filters,
             SearchTokenizer::UnicodeWords { filters, .. } => filters,
@@ -867,6 +917,12 @@ impl SearchTokenizer {
                 }
             },
             SearchTokenizer::ICUTokenizer(_filters) => format!("icu{filters_suffix}"),
+            #[cfg(feature = "sudachi")]
+            SearchTokenizer::Sudachi {
+                mode,
+                normalized,
+                filters: _,
+            } => format!("sudachi_mode:{mode:?}_normalized:{normalized}{filters_suffix}"),
             SearchTokenizer::Jieba {
                 chinese_convert,
                 filters: _,

@@ -29,6 +29,8 @@ use std::marker::PhantomData;
 use std::ptr::addr_of_mut;
 use tokenizers::chinese_convert::ConvertMode;
 use tokenizers::manager::{LinderaLanguage, SearchTokenizerFilters};
+#[cfg(feature = "sudachi")]
+use tokenizers::sudachi::SudachiMode;
 use tokenizers::SearchTokenizer;
 
 pub(crate) mod definitions;
@@ -88,6 +90,12 @@ fn tokenizer_from_name(name: &str) -> Option<SearchTokenizer> {
             language: LinderaLanguage::default(),
             filters: SearchTokenizerFilters::default(),
             keep_whitespace: false,
+        },
+        #[cfg(feature = "sudachi")]
+        "sudachi" => SearchTokenizer::Sudachi {
+            mode: SudachiMode::default(),
+            normalized: true,
+            filters: SearchTokenizerFilters::default(),
         },
         "icu" => SearchTokenizer::ICUTokenizer(SearchTokenizerFilters::default()),
         "jieba" => SearchTokenizer::Jieba {
@@ -275,6 +283,10 @@ fn apply_expression_params(tokenizer: &mut SearchTokenizer, parsed: &typmod::Par
         | SearchTokenizer::KoreanLinderaDeprecated(_)
         | SearchTokenizer::KoreanLindera { .. }
         | SearchTokenizer::LinderaDeprecated { .. } => {}
+        // Sudachi config (mode, normalized, filters) is set at index creation
+        // from the JSON tokenizer config; typmod expression params don't apply.
+        #[cfg(feature = "sudachi")]
+        SearchTokenizer::Sudachi { .. } => {}
     }
 }
 
@@ -497,6 +509,10 @@ pub fn apply_typmod(tokenizer: &mut SearchTokenizer, typmod: Typmod) {
         SearchTokenizer::Keyword => {}
         #[allow(deprecated)]
         SearchTokenizer::KeywordDeprecated => {}
+        // Sudachi config (mode, normalized, filters) is set at index creation
+        // from the JSON tokenizer config; typmod expression params don't apply.
+        #[cfg(feature = "sudachi")]
+        SearchTokenizer::Sudachi { .. } => {}
     }
 }
 

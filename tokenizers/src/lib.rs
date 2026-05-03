@@ -21,6 +21,8 @@ pub mod code;
 pub mod edge_ngram;
 pub mod icu;
 pub mod lindera;
+#[cfg(feature = "sudachi")]
+pub mod sudachi;
 pub mod manager;
 pub mod ngram;
 pub mod token_length;
